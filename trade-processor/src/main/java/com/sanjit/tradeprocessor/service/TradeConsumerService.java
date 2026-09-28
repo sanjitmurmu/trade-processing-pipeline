@@ -1,6 +1,7 @@
 package com.sanjit.tradeprocessor.service;
 
 import com.sanjit.common.constants.KafkaTopics;
+import com.sanjit.common.dto.ReferenceDataResponse;
 import com.sanjit.common.dto.TradeEvent;
 import com.sanjit.common.enums.TradeStatus;
 import com.sanjit.tradeprocessor.entity.TradeEntity;
@@ -9,6 +10,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestClient;
 
 @Service
 @RequiredArgsConstructor
@@ -16,6 +18,7 @@ import org.springframework.stereotype.Service;
 public class TradeConsumerService {
 
     private final TradeRepository tradeRepository;
+    private final RestClient restClient;
 
     @KafkaListener(
             topics = KafkaTopics.TRADE_EVENTS,
@@ -24,15 +27,20 @@ public class TradeConsumerService {
 
         log.info("Received Trade : {}", tradeEvent.tradeId());
 
+        ReferenceDataResponse referenceData = restClient.get()
+                .uri("/reference/{symbol}", tradeEvent.symbol())
+                .retrieve()
+                .body(ReferenceDataResponse.class);
+
         TradeEntity entity = TradeEntity.builder()
                 .tradeId(tradeEvent.tradeId())
                 .symbol(tradeEvent.symbol())
                 .side(tradeEvent.side())
                 .quantity(tradeEvent.quantity())
                 .price(tradeEvent.price())
-                .exchange("NASDAQ")
-                .currency("USD")
-                .sector("TECH")
+                .exchange(referenceData.exchange())
+                .currency(referenceData.currency())
+                .sector(referenceData.sector())
                 .status(TradeStatus.PENDING)
                 .build();
 
