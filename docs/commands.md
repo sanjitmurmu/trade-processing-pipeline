@@ -27,7 +27,14 @@ docker compose down
 ...
 
 ### Reset consumer offset
-...
+
+This command will only show if the offset reset is possible, it won't execute the changes.
+
+    docker exec trade-kafka kafka-consumer-groups --bootstrap-server localhost:9092 --group trade-processor-group --topic trade-events:0 --reset-offsets --to-offset 7
+
+This command will execute offset reset to the new offset position we want
+
+    docker exec trade-kafka kafka-consumer-groups --bootstrap-server localhost:9092 --group trade-processor-group --topic trade-events:0 --reset-offsets --to-offset 7 --execute
 
 
 ## 3. Redis
