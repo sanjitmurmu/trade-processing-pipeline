@@ -512,43 +512,453 @@ This lets us verify that the application actually populated Redis with the expec
 
 ## 4. Maven
 
-### Build entire project
+### Build the entire project
+```
 mvn clean verify
+```
+What it does:
+
+- clean → removes previous build output (target/)
+- verify → compiles, runs tests, packages modules, and performs Maven verification steps.
+
+For our multi-module project, this is the main command to verify that the whole project is healthy.
+
+### Compile without running tests
+```
+mvn clean package -DskipTests
+```
+Useful when you want to quickly confirm that the code compiles and packages successfully without spending time running tests.
+
+**Important:** -DskipTests skips test execution, but tests are still compiled.
+
+### Run tests
+```
+mvn test
+```
+Runs the tests across the Maven project.
+
+When we eventually add proper unit/integration tests, this will become particularly useful.
 
 ### Run a specific module
-...
+For example, only trade-processor:
+```
+mvn -pl trade-processor clean verify
+```
+-pl means project list.
 
-## 5. Application
+So:
+```
+-pl trade-processor
+```
+means:
 
-### Trade Producer
-Port: 8080
+Build only the trade-processor module.
 
-### Trade Processor
-Port: 8081
+### Build a module and its dependencies
 
-### Reference Data Service
-Port: 8082
+This one is particularly useful in our project:
+```
+mvn -pl trade-processor -am clean verify
+```
+-am means also make.
 
+So Maven will build trade-processor and the modules it depends on, such as:
+```
+trade-common
+      ↓
+trade-processor
+```
+
+This is useful because trade-processor depends on trade-common.
+
+### Run a Spring Boot service with Maven
+
+For example:
+```
+mvn spring-boot:run
+```
+Run this from the service's module directory.
+
+For trade-processor, for example:
+```
+cd trade-processor
+mvn spring-boot:run
+```
+Remember our timezone issue:
+```
+mvn -Duser.timezone=Asia/Kolkata spring-boot:run
+```
+We needed this because Maven wasn't inheriting the timezone VM option from IntelliJ.
+
+### Clean the project
+```
+mvn clean
+```
+Removes generated build artifacts such as:
+```
+target/
+```
+It doesn't delete our source code.
+
+### Check Maven version
+```
+mvn -version
+```
+Useful for troubleshooting environment issues.
+
+### One important distinction
+
+Think of these three commands like this:
+```
+mvn clean
+     ↓
+Remove previous build artifacts
+
+mvn test
+     ↓
+Run tests
+
+mvn clean verify
+     ↓
+Clean + build + test + verification
+```
+For our project, the command I want you to remember as the normal "is my entire project healthy?" command is:
+```
+mvn clean verify
+```
+
+## 5. Service / Application
+
+### Start Trade Producer
+
+From the trade-producer directory:
+```
+mvn spring-boot:run
+```
+Runs:
+```
+Trade Producer → http://localhost:8080
+```
+
+### Start Trade Processor
+
+From trade-processor:
+```
+mvn -Duser.timezone=Asia/Kolkata spring-boot:run
+```
+Runs:
+```
+Trade Processor → http://localhost:8081
+```
+The timezone option is currently important for our PostgreSQL setup.
+
+### Start Reference Data Service
+
+From reference-data-service:
+```
+mvn spring-boot:run
+```
+Runs:
+```
+Reference Data Service → http://localhost:8082
+```
+
+### Test Reference Data Service
+
+For example:
+```
+curl http://localhost:8082/reference/AAPL
+```
+Expected response:
+```
+{
+  "symbol": "AAPL",
+  "exchange": "NASDAQ",
+  "currency": "USD",
+  "sector": "TECH"
+}
+```
+Testing an unknown symbol:
+```
+curl http://localhost:8082/reference/XYZ
+```
+Expected:
+```
+HTTP 404
+```
+
+### Test Trade Producer
+
+Send a trade:
+```
+curl -X POST http://localhost:8080/api/trades ^
+  -H "Content-Type: application/json" ^
+  -d "{\"tradeId\":\"T3001\",\"symbol\":\"AAPL\",\"side\":\"BUY\",\"quantity\":100,\"price\":150.50}"
+```
+Because you're on Windows, ^ is the line-continuation character in CMD.
+
+The flow should then be:
+```
+POST /api/trades
+      ↓
+Trade Producer
+      ↓
+Kafka: trade-events
+      ↓
+Trade Processor
+      ↓
+Redis cache
+      ↓
+Reference Data Service (if cache MISS)
+      ↓
+PostgreSQL
+```
+
+### Check service ports
+
+| Service                |   Port |
+| ---------------------- | -----: |
+| Trade Producer         | `8080` |
+| Trade Processor        | `8081` |
+| Reference Data Service | `8082` |
+| PostgreSQL             | `5432` |
+| Redis                  | `6379` |
+| Kafka                  | `9092` |
+| ZooKeeper              | `2181` |
+
+
+### Stop a Spring Boot application
+
+If running in a terminal:
+```
+Ctrl + C
+```
+This stops that particular Spring Boot process.
+
+One thing to remember
+
+There are two different categories of things we're starting:
+```
+Docker
+ ├── Kafka
+ ├── ZooKeeper
+ ├── PostgreSQL
+ └── Redis
+
+Spring Boot
+ ├── Trade Producer
+ ├── Trade Processor
+ └── Reference Data Service
+```
+Docker provides our infrastructure, while Maven/Spring Boot starts our applications.
 
 ## 6. PostgreSQL / SQL
 
-### Check a trade
-...
+Our PostgreSQL instance runs inside Docker:
+```
+Container: trade-postgres
+Host: localhost
+Port: 5432
+Database: trade_db
+User: postgres
+Password: postgres
+```
 
-### Check all trades
-...
+### Open PostgreSQL shell
+```
+docker exec -it trade-postgres psql -U postgres -d trade_db
+```
+This opens the PostgreSQL interactive terminal (psql) directly inside the container.
 
+### List databases
+
+Inside psql:
+```
+\l
+```
+
+### Connect to a database
+```
+\c trade_db
+```
+
+### List tables
+```
+\dt
+```
+For our project, you should see the trade table.
+
+### Describe a table
+```
+\d trade
+```
+This shows the table's columns, data types, indexes, etc.
+
+### Query trades
+```
+SELECT * FROM trade;
+```
+Useful for verifying that Kafka processing eventually resulted in database persistence.
+
+### Query specific trade
+```
+SELECT * FROM trade WHERE trade_id = 'T2001';
+```
+This is particularly useful when debugging one trade end-to-end.
+
+### Count trades
+SELECT COUNT(*) FROM trade;
+
+Useful for quickly checking how many trades have been persisted.
+
+### Exit PostgreSQL
+```
+\q
+```
+This returns you to your normal terminal.
+
+### The debugging flow to remember
+
+When we send:
+```
+T3001
+  ↓
+Producer
+  ↓
+Kafka
+  ↓
+Processor
+  ↓
+Redis / Reference Data
+  ↓
+PostgreSQL
+```
+we can verify the final result with:
+```
+SELECT * FROM trade WHERE trade_id = 'T3001';
+```
 
 ## 7. Git
 
-### Check status
-...
+### Check repository status
+```
+git status
+```
+Shows:
 
-### Add changes
-...
+- modified files
+- untracked files
+- staged files
+- current branch
 
-### Commit
-...
+Use this before committing.
 
-### Push
-...
+### See changed files
+```
+git diff --stat
+```
+Gives a quick summary of what changed.
+
+For detailed changes:
+```
+git diff
+```
+
+### Stage a specific file
+```
+git add <file>
+```
+Example:
+```
+git add trade-processor/src/main/java/com/sanjit/tradeprocessor/config/CacheConfig.java
+```
+
+### Stage all changes
+```
+git add .
+```
+This stages all modified and untracked files.
+
+For our project, I prefer:
+```
+git status
+    ↓
+review changes
+    ↓
+git add .
+    ↓
+git status
+```
+
+before committing.
+
+### Commit changes
+```
+git commit -m "Implement Redis caching"
+```
+A commit should describe what changed, not what you happened to do.
+
+Examples:
+```
+Implement Redis caching
+Add reference data enrichment
+Add Kafka trade processing flow
+Add project command documentation
+```
+
+### Push to GitHub
+```
+git push origin main
+```
+Pushes the local main branch to GitHub.
+
+### View recent commits
+```
+git log --oneline
+```
+Example:
+```
+abf4034 Implement reference data enrichment
+24b8f73 Implement Kafka trade processing flow
+7365e02 Initial multi-module trade processing pipeline setup
+```
+
+### See remote repository
+```
+git remote -v
+```
+
+Shows which GitHub repository the local project is connected to.
+
+### Pull latest changes
+```
+git pull origin main
+```
+Downloads and integrates changes from GitHub into the local main branch.
+
+We should normally do this before starting work if changes may have been made remotely.
+
+### Our project commit workflow
+
+This is the important part to remember:
+```
+1. Make changes
+       ↓
+2. Run the application
+       ↓
+3. Test the complete flow
+       ↓
+4. mvn clean verify
+       ↓
+5. git status
+       ↓
+6. Review git diff
+       ↓
+7. git add .
+       ↓
+8. git status
+       ↓
+9. git commit -m "..."
+       ↓
+10. git push origin main
+```
