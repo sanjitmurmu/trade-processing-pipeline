@@ -18,7 +18,7 @@ import org.springframework.web.client.RestClient;
 public class TradeConsumerService {
 
     private final TradeRepository tradeRepository;
-    private final RestClient restClient;
+    private final ReferenceDataClient referenceDataClient;
 
     @KafkaListener(
             topics = KafkaTopics.TRADE_EVENTS,
@@ -27,10 +27,7 @@ public class TradeConsumerService {
 
         log.info("Received Trade : {}", tradeEvent.tradeId());
 
-        ReferenceDataResponse referenceData = restClient.get()
-                .uri("/reference/{symbol}", tradeEvent.symbol())
-                .retrieve()
-                .body(ReferenceDataResponse.class);
+        ReferenceDataResponse referenceData = referenceDataClient.getReferenceData(tradeEvent.symbol());
 
         TradeEntity entity = TradeEntity.builder()
                 .tradeId(tradeEvent.tradeId())
