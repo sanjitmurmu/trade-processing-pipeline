@@ -304,15 +304,211 @@ Never reset offsets casually in a production environment.
 
 ## 3. Redis
 
+Redis is used as the cache for reference data in the Trade Processor.
+
+### Project Redis details
+
+| Item | Value |
+|---|---|
+| Container | `trade-redis` |
+| Host | `localhost` |
+| Port | `6379` |
+| Spring cache name | `referenceData` |
+| Example cache key | `referenceData::NVDA` |
+
+---
+
 ### Open Redis CLI
-...
+
+```bash
+docker exec -it trade-redis redis-cli
+```
+Opens the Redis command-line interface inside the trade-redis container.
+
+After running this command, the prompt changes to:
+```
+127.0.0.1:6379>
+```
+
+Redis commands can then be executed directly.
+
 
 ### List cache keys
-...
+```
+KEYS *
+```
+Lists keys currently stored in Redis.
+
+Example:
+```
+referenceData::NVDA
+```
+Useful during local development for inspecting cache contents.
+
+**Note:** KEYS * should generally not be used on a large production Redis instance because it can scan the entire keyspace. It is acceptable for our small local development environment.
 
 ### Read a cached value
-...
+```
+GET "referenceData::NVDA"
+```
 
+Returns the value stored for the specified Redis key.
+
+In our project, the value is JSON serialized by:
+```
+GenericJackson2JsonRedisSerializer
+```
+Example:
+```
+{
+  "@class": "com.sanjit.common.dto.ReferenceDataResponse",
+  "symbol": "NVDA",
+  "exchange": "NASDAQ",
+  "currency": "USD",
+  "sector": "TECH"
+}
+```
+
+### Check whether a key exists
+```
+EXISTS "referenceData::NVDA"
+```
+Returns:
+```
+1
+```
+if the key exists, or:
+```
+0
+```
+if it does not exist.
+
+Useful for quickly checking whether a reference-data entry is currently cached.
+
+### Check the remaining TTL
+```
+TTL "referenceData::NVDA"
+```
+Returns the remaining time-to-live in seconds.
+
+Possible results include:
+```
+> 0   → key exists and has this many seconds remaining
+-1    → key exists but has no expiration
+-2    → key does not exist
+```
+This becomes useful when we configure cache expiration.
+
+### Delete a cache entry
+```
+DEL "referenceData::NVDA"
+```
+Deletes the specified cache entry.
+
+This is useful during development when we want to deliberately create a cache MISS and test the complete flow again.
+
+For example:
+```
+Redis
+  ↓
+DEL referenceData::NVDA
+  ↓
+next NVDA trade
+  ↓
+CACHE MISS
+  ↓
+Reference Data Service
+  ↓
+Redis
+```
+
+### Exit Redis CLI
+```
+EXIT
+```
+or:
+```
+QUIT
+```
+Returns to the normal terminal.
+
+### Understanding the Spring cache key
+
+Our application uses:
+```
+@Cacheable("referenceData")
+```
+with:
+```
+getReferenceData(String symbol)
+```
+For:
+```
+getReferenceData("NVDA")
+```
+Spring creates a Redis key equivalent to:
+```
+referenceData::NVDA
+```
+The structure is:
+```
+cache-name::key
+```
+Therefore:
+```
+referenceData::NVDA
+referenceData::AAPL
+referenceData::JPM
+```
+can represent separate cached reference-data entries.
+
+### Cache HIT vs Cache MISS
+
+The expected flow is:
+
+Cache MISS
+```
+Trade Processor
+      ↓
+Redis
+      ↓
+NVDA not found
+      ↓
+Reference Data Service
+      ↓
+Response
+      ↓
+Redis stores NVDA
+```
+
+Cache HIT
+```
+Trade Processor
+      ↓
+Redis
+      ↓
+NVDA found
+      ↓
+Cached ReferenceDataResponse
+```
+On a cache HIT, the HTTP call to the Reference Data Service is avoided.
+
+
+### Inspecting Redis during development
+
+A useful debugging sequence is:
+```
+docker exec -it trade-redis redis-cli
+```
+Then:
+```
+KEYS *
+```
+Then:
+```
+GET "referenceData::NVDA"
+```
+This lets us verify that the application actually populated Redis with the expected reference data.
 
 ## 4. Maven
 
