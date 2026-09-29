@@ -32,9 +32,15 @@ This command will only show if the offset reset is possible, it won't execute th
 
     docker exec trade-kafka kafka-consumer-groups --bootstrap-server localhost:9092 --group trade-processor-group --topic trade-events:0 --reset-offsets --to-offset 7
 
+<img width="1829" height="122" alt="image" src="https://github.com/user-attachments/assets/f94e87b7-1ff0-4066-ac35-953bf9c736a2" />
+
+
 This command will execute offset reset to the new offset position we want
 
     docker exec trade-kafka kafka-consumer-groups --bootstrap-server localhost:9092 --group trade-processor-group --topic trade-events:0 --reset-offsets --to-offset 7 --execute
+
+<img width="1812" height="110" alt="image" src="https://github.com/user-attachments/assets/4e931eda-2495-47d1-85c8-819677ff2191" />
+
 
 
 ## 3. Redis
