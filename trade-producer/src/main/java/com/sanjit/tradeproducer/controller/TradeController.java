@@ -2,6 +2,7 @@ package com.sanjit.tradeproducer.controller;
 
 import com.sanjit.tradeproducer.service.TradeProducerService;
 import com.sanjit.common.dto.TradeEvent;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -18,7 +19,7 @@ public class TradeController {
 
     @PostMapping
     public ResponseEntity<String> createTrade(
-            @RequestBody TradeEvent tradeEvent) {
+            @Valid @RequestBody TradeEvent tradeEvent) {
 
         tradeProducerService.publishTrade(tradeEvent);
 
