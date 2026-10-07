@@ -1,8 +1,8 @@
 # Trade Processing Pipeline
 
-A backend microservice application built with **Java, Spring Boot, Apache Kafka, and PostgreSQL** for processing financial trade events asynchronously.
+A backend microservice application built with Java, Spring Boot, Apache Kafka, PostgreSQL, and Redis for processing financial trade events asynchronously.
 
-The project is designed as a hands-on backend engineering project to demonstrate event-driven architecture, Kafka-based communication, persistence, microservices, and scalable backend design.
+The project is designed as a hands-on backend engineering project focused on event-driven architecture, distributed systems, reliability, fault tolerance, data consistency, and production-oriented backend design.
 
 ---
 
@@ -20,29 +20,50 @@ The project is designed as a hands-on backend engineering project to demonstrate
                          │    Spring Boot      │
                          └──────────┬──────────┘
                                     │
-                                    │ Publish TradeEvent
+                                    │ TradeEvent
                                     ▼
                          ┌─────────────────────┐
-                         │   Apache Kafka      │
-                         │                     │
-                         │   trade-events      │
+                         │       Kafka         │
+                         │    trade-events     │
                          └──────────┬──────────┘
                                     │
-                                    │ Consume TradeEvent
+                                    │ Consume
                                     ▼
                          ┌─────────────────────┐
                          │   Trade Processor   │
                          │    Spring Boot      │
                          └──────────┬──────────┘
                                     │
-                                    │ Persist Trade
-                                    ▼
-                         ┌─────────────────────┐
-                         │    PostgreSQL       │
-                         │                     │
-                         │     trade table     │
-                         └─────────────────────┘
-
+                       ┌────────────┴────────────┐
+                       │                         │
+                       ▼                         ▼
+              ┌─────────────────┐      ┌─────────────────┐
+              │   PostgreSQL    │      │      Redis      │
+              │                 │      │ Reference Data  │
+              │ trade           │      │     Cache       │
+              │ outbox_event    │      └─────────────────┘
+              └────────┬────────┘
+                       │
+                       │ PENDING Outbox Events
+                       ▼
+              ┌─────────────────────┐
+              │  Outbox Publisher   │
+              │  Scheduled Worker   │
+              └──────────┬──────────┘
+                         │
+                         │ Publish
+                         ▼
+              ┌─────────────────────┐
+              │       Kafka         │
+              │ trade-notifications │
+              └─────────────────────┘
+                         │
+                         ▼
+              ┌─────────────────────┐
+              │ Notification        │
+              │ Service             │
+              │    (Scaffolded)     │
+              └─────────────────────┘
 
 The architecture is implemented as a Maven multi-module project. Each service is a separate Spring Boot application and can be built and deployed independently.
 
@@ -64,6 +85,9 @@ The architecture is implemented as a Maven multi-module project. Each service is
 - Spring Kafka
 - Apache Kafka
 - PostgreSQL 16
+- Redis
+- Spring Data JPA
+- Spring Cache
 - Maven
 - Docker / Docker Compose
 - Lombok
@@ -71,25 +95,34 @@ The architecture is implemented as a Maven multi-module project. Each service is
 ## Current Processing Flow
 
 The current end-to-end flow is:
-    
-    REST Request
-         ↓
-    Trade Producer
-         ↓
-    JSON → TradeEvent
-         ↓
-    Kafka Producer
-         ↓
-    Kafka Topic: trade-events
-         ↓
-    Kafka Consumer
-         ↓
-    Trade Processor
-         ↓
-    TradeEntity
-         ↓
-    PostgreSQL
-
+```    
+              REST Request
+                   ↓
+              Trade Producer
+                   ↓
+              TradeEvent
+                   ↓
+              Kafka: trade-events
+                   ↓
+              Trade Processor
+                   ↓
+              Reference Data Enrichment
+                   ↓
+              Duplicate Check
+                   ↓
+              ┌─────────────────────────────────────┐
+              │ PostgreSQL Transaction              │
+              │                                     │
+              │  TradeEntity                        │
+              │       +                             │
+              │  OutboxEvent (PENDING)              │
+              └─────────────────────────────────────┘
+                   ↓
+              Outbox Publisher
+                   ↓
+              Kafka: trade-notifications
+```
+## Trade Processing
 1. Trade submission
 
 A client sends a trade through the REST API:
@@ -116,15 +149,96 @@ Spring Kafka's JsonSerializer converts the Java event into bytes that Kafka can 
 
 3. Kafka consumption
 
-trade-processor listens to the trade-events topic using the consumer group:
+trade-processor consumes messages from:
+```
+Topic:
+trade-events
 
-    trade-processor-group
+Consumer Group:
+trade-processor-group
+```
+The processor deserializes the Kafka message back into a TradeEvent.
 
-The Kafka message is deserialized back into a TradeEvent.
+4. Reference-data enrichment
 
-4. Persistence
+The processor obtains reference information required for trade processing, such as:
+- Exchange
+- Currency
+- Sector
+- Other reference attributes
+Redis is used as a cache for reference data to avoid unnecessary repeated lookups.  
+Example cache:
 
-The processor maps the event to a TradeEntity and stores it in PostgreSQL.
+```
+Cache:
+referenceData
+
+Example key:
+referenceData::NVDA
+```
+
+5. Idempotent processing
+Before persisting a trade, the processor checks whether the tradeId already exists.  
+If the trade has already been processed, the duplicate event is skipped.  
+This protects the database from creating duplicate trade records when the same Kafka event is delivered more than once.  
+
+## Transactional Outbox Pattern
+The trade processor uses the Transactional Outbox Pattern to maintain consistency between database persistence and downstream event publishing.  
+When a trade is successfully processed, the following operations occur inside the same PostgreSQL transaction:  
+```
+┌──────────────────────────────────┐
+│ PostgreSQL Transaction           │
+│                                  │
+│  Save TradeEntity                │
+│           +                      │
+│  Save OutboxEvent (PENDING)      │
+│                                  │
+│  COMMIT                          │
+└──────────────────────────────────┘
+```
+
+This ensures that the trade and its corresponding outbox event are committed atomically.
+If the transaction fails, both operations are rolled back.
+**Outbox Event**
+The outbox table stores events that must eventually be published to Kafka.
+Important fields include:  
+```
+id
+event_type
+aggregate_id
+topic
+payload
+status
+created_at
+published_at
+```
+
+The initial status is:
+
+    PENDING
+
+## Outbox Publisher
+A scheduled publisher periodically checks for pending outbox events.
+
+```
+PostgreSQL
+    │
+    │ PENDING events
+    ▼
+Outbox Publisher
+    │
+    │ Kafka send
+    ▼
+trade-notifications
+```
+When Kafka successfully acknowledges the send:  
+
+      PENDING → PUBLISHED
+      
+and published_at is recorded.
+If Kafka is unavailable, the event remains:
+
+    PENDING
 
 ## Kafka
 
