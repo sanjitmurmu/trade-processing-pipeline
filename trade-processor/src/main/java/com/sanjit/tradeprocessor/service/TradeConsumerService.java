@@ -1,9 +1,12 @@
 package com.sanjit.tradeprocessor.service;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.sanjit.common.constants.KafkaTopics;
 import com.sanjit.common.dto.ReferenceDataResponse;
 import com.sanjit.common.dto.TradeEvent;
 import com.sanjit.common.enums.TradeStatus;
+import com.sanjit.tradeprocessor.entity.OutboxEvent;
+import com.sanjit.tradeprocessor.entity.OutboxStatus;
 import com.sanjit.tradeprocessor.entity.TradeEntity;
 import com.sanjit.tradeprocessor.repository.TradeRepository;
 import lombok.RequiredArgsConstructor;
@@ -14,7 +17,7 @@ import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Service;
 import org.springframework.kafka.annotation.RetryableTopic;
 import org.springframework.retry.annotation.Backoff;
-import org.springframework.kafka.support.KafkaHeaders;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 @Service
 @RequiredArgsConstructor
@@ -23,6 +26,8 @@ public class TradeConsumerService {
 
     private final TradeRepository tradeRepository;
     private final ReferenceDataClient referenceDataClient;
+    private final TradePersistenceService tradePersistenceService;
+    private final ObjectMapper objectMapper;
 
     @RetryableTopic(
             attempts = "4",
@@ -62,9 +67,28 @@ public class TradeConsumerService {
                 .status(TradeStatus.PENDING)
                 .build();
 
-        tradeRepository.save(entity);
+        String payload;
 
-        log.info("Trade saved successfully");
+        try {
+            payload = objectMapper.writeValueAsString(tradeEvent);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException(
+                    "Failed to serialize trade event: " + tradeEvent.tradeId(),
+                    e
+            );
+        }
+
+        OutboxEvent outboxEvent = OutboxEvent.builder()
+                .eventType("TRADE_CREATED")
+                .aggregateId(tradeEvent.tradeId())
+                .topic("trade-notifications")
+                .payload(payload)
+                .status(OutboxStatus.PENDING)
+                .build();
+
+        tradePersistenceService.persistTradeAndEvent(entity, outboxEvent);
+
+        log.info("Trade and outbox event saved successfully");
     }
 
     @DltHandler
