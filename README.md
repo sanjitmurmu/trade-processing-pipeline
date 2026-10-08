@@ -178,6 +178,7 @@ referenceData::NVDA
 ```
 
 5. Idempotent processing
+
 Before persisting a trade, the processor checks whether the tradeId already exists.  
 If the trade has already been processed, the duplicate event is skipped.  
 This protects the database from creating duplicate trade records when the same Kafka event is delivered more than once.  
@@ -199,7 +200,10 @@ When a trade is successfully processed, the following operations occur inside th
 
 This ensures that the trade and its corresponding outbox event are committed atomically.
 If the transaction fails, both operations are rolled back.
+
+
 **Outbox Event**
+
 The outbox table stores events that must eventually be published to Kafka.
 Important fields include:  
 ```
@@ -235,28 +239,196 @@ When Kafka successfully acknowledges the send:
 
       PENDING → PUBLISHED
       
-and published_at is recorded.
+and published_at is recorded.  
+
 If Kafka is unavailable, the event remains:
 
     PENDING
+and the next scheduled execution can retry publishing it.  
+
+The current implementation runs the publisher once every 60 seconds.
+
+## Delivery Semantics
+
+The current outbox implementation provides at-least-once delivery semantics.  
+
+A possible failure window exists if:
+```
+Kafka publish succeeds
+        ↓
+Application crashes
+        ↓
+Outbox status is still PENDING
+```
+
+The event may therefore be published again during a later retry.  
+
+The system is designed to tolerate this through idempotent processing rather than risk losing an event.
+
+## Kafka Error Handling
+
+The trade consumer uses Spring Kafka retry support.  
+
+Current configuration:
+```
+Attempts: 4
+
+Backoff:
+Initial delay: 1 second
+Multiplier: 2
+Maximum delay: 4 seconds
+```
+If processing continues to fail after the configured retry attempts, the message is handled by the Dead Letter Topic (DLT) mechanism.  
+
+High-level flow:
+```
+Kafka Message
+     ↓
+Consumer
+     ↓
+Processing Failure
+     ↓
+Retry
+     ↓
+Retry
+     ↓
+Retry
+     ↓
+Retry
+     ↓
+DLT
+```
+This prevents a permanently failing message from continuously blocking normal processing.
+
+## Reliability Scenarios Verified
+
+The following scenarios have been tested:  
+
+**Normal processing**
+```
+Trade Event
+    ↓
+Kafka
+    ↓
+Trade Processor
+    ↓
+Trade + Outbox saved
+    ↓
+Outbox published
+    ↓
+PUBLISHED
+```
+
+**Kafka unavailable**
+
+```
+Trade + Outbox saved
+        ↓
+Kafka unavailable
+        ↓
+Publish fails
+        ↓
+Outbox remains PENDING
+        ↓
+Kafka recovers
+        ↓
+Next publisher run succeeds
+        ↓
+PUBLISHED
+```
+
+**Transaction atomicity**
+
+If the transaction fails:
+
+```
+Trade save
+    +
+Outbox save
+    ↓
+Transaction failure
+    ↓
+ROLLBACK
+    ↓
+Neither record remains in PostgreSQL
+```
+
+**Duplicate delivery**
+
+If the same trade event is received more than once:
+```
+First delivery
+    ↓
+Trade persisted
+
+Second delivery
+    ↓
+tradeId already exists
+    ↓
+Duplicate skipped
+```
+Only one trade and one corresponding outbox event are persisted.
 
 ## Kafka
 
 Kafka acts as the asynchronous event backbone of the application.
 
-The project currently uses:
+**Topics**
+```
+trade-events
+trade-notifications
+```
 
-    Topic:
-    trade-events
-    
-    Consumer Group:
-    trade-processor-group
+**Consumer Group**
+```
+trade-processor-group
+```
 
 The producer and processor are decoupled through Kafka:
+```
+Producer → Kafka → Processor
+```
+This allows the producer to publish events without requiring the processor to be available at the exact same moment.
 
-    Producer → Kafka → Processor
+## Database
 
-This allows the producer to publish an event without directly depending on the processor being available at that exact moment.
+PostgreSQL is used for transactional persistence.
+
+**Main tables**
+```
+trade
+outbox_event
+```
+
+trade
+Stores the processed trade information.  
+
+
+outbox_event
+Stores events that must be published to downstream Kafka topics.  
+
+Outbox event lifecycle:
+```
+PENDING
+   ↓
+Kafka publish successful
+   ↓
+PUBLISHED
+```
+
+## Redis
+
+Redis is used as a cache for reference data.  
+
+Example:
+```
+Cache:
+referenceData
+
+Key:
+referenceData::NVDA
+```
+The cache reduces repeated reference-data lookups during trade processing.
 
 ## Microservice Structure
 
@@ -281,15 +453,22 @@ Although all services are maintained in a single Git repository, they are separa
 
 The repository follows a monorepo / multi-module Maven structure while maintaining separate runtime boundaries for the services.
 
-## Database
+## Service Ports
 
-PostgreSQL is used for trade persistence.
+| Service | Port |
+|---|---:|
+| `trade-producer` | 8080 |
+| `trade-processor` | 8081 |
+| `reference-data-service` | 8082 |
 
-The main persistence model currently revolves around the:
+**Infrastructure:**
 
-    trade
-
-table.
+| Component | Port |
+|---|---:|
+| Kafka | 9092 |
+| ZooKeeper | 2181 |
+| PostgreSQL | 5432 |
+| Redis | 6379 |
 
 ## Documentation
 
@@ -307,32 +486,44 @@ Current documentation includes:
 - Sequence Diagrams
 - Requirements
 - Interview Questions
+- Development and Docker Commands
 
 ## Project Roadmap
 
 The project will evolve incrementally toward a production-style event-driven backend.
 
-Planned areas include:
+**Completed**
 
-- Trade validation
-- Reference-data enrichment
-- Kafka consumer error handling
-- Retry and Dead Letter Topics
-- Idempotent processing
-- Transaction management
-- Trade status lifecycle
-- Notification processing
-- Observability and logging
-- Automated testing
-- Containerization
-- CI/CD
-- Scalable service deployment
+- [x] Trade submission REST API
+- [x] Kafka producer
+- [x] Kafka consumer
+- [x] Reference-data enrichment
+- [x] Redis caching
+- [x] Duplicate / idempotent processing
+- [x] Kafka retry handling
+- [x] Dead Letter Topic handling
+- [x] Transaction management
+- [x] Transactional Outbox Pattern
+- [x] Outbox retry on Kafka failure
+- [x] Trade persistence
+- [x] Basic reliability testing
+
+**Planned**
+- [ ] Trade status lifecycle
+- [ ] Notification processing
+- [ ] Automated unit and integration testing
+- [ ] Observability and metrics
+- [ ] Improved outbox processing and concurrency
+- [ ] Containerized service deployment
+- [ ] CI/CD pipeline
+- [ ] Scalable service deployment
+- [ ] Further resilience and failure testing
   
 ## Learning Objectives
 
 This project is being developed as a practical backend engineering exercise with emphasis on:
 
-- Spring Boot internals
+- Spring Boot
 - Microservice architecture
 - Kafka fundamentals and internals
 - Event-driven architecture
@@ -341,6 +532,12 @@ This project is being developed as a practical backend engineering exercise with
 - Consumer groups and offsets
 - Database persistence
 - Transaction management
+- Transactional Outbox Pattern
+- Idempotency
+- Retry and Dead Letter Topics
+- Redis caching
 - Distributed-system design
 - Reliability and fault tolerance
+- At-least-once delivery
 - Production-oriented backend engineering
+
