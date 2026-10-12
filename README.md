@@ -69,13 +69,13 @@ The architecture is implemented as a Maven multi-module project. Each service is
 
 ## Modules
 
-| Module                   | Responsibility                                          | Status      |
-| ------------------------ | ------------------------------------------------------- | ----------- |
-| `trade-common`           | Shared DTOs, enums, constants and common components     | In progress |
-| `trade-producer`         | Exposes REST API and publishes trade events to Kafka    | Implemented |
-| `trade-processor`        | Consumes Kafka events and persists trades to PostgreSQL | Implemented |
-| `reference-data-service` | Provides reference data and enrichment capabilities     | Scaffolded  |
-| `notification-service`   | Handles downstream trade notifications                  | Scaffolded  |
+| Module | Responsibility | Status |
+|---|---|---|
+| `trade-common` | Shared DTOs, enums, and common components | Implemented; evolving |
+| `trade-producer` | Exposes REST API and publishes trade events to Kafka | Implemented |
+| `trade-processor` | Consumes trade events, enriches trades, calculates fees, persists trades, and creates outbox events | Implemented |
+| `reference-data-service` | Provides reference data for trade enrichment | Implemented |
+| `notification-service` | Consumes downstream processed-trade events for notification processing | Scaffolded; implementation pending |
 
 
 ## Technology Stack
@@ -94,34 +94,38 @@ The architecture is implemented as a Maven multi-module project. Each service is
 
 ## Current Processing Flow
 
-The current end-to-end flow is:
+The current end-to-end processing flow is:
 ```    
-              REST Request
-                   ↓
-              Trade Producer
-                   ↓
-              TradeEvent
-                   ↓
-              Kafka: trade-events
-                   ↓
-              Trade Processor
-                   ↓
-              Reference Data Enrichment
-                   ↓
-              Duplicate Check
-                   ↓
-              ┌─────────────────────────────────────┐
-              │ PostgreSQL Transaction              │
-              │                                     │
-              │  TradeEntity                        │
-              │       +                             │
-              │  OutboxEvent (PENDING)              │
-              └─────────────────────────────────────┘
-                   ↓
-              Outbox Publisher
-                   ↓
-              Kafka: trade-notifications
+REST Request
+     ↓
+Trade Producer
+     ↓
+TradeEvent
+     ↓
+Kafka: trade-events
+     ↓
+Trade Processor
+     ↓
+Reference Data Enrichment
+     ↓
+Duplicate Check
+     ↓
+Fee Calculation
+  ├── Brokerage Fee
+  ├── Tax
+  └── Regulatory Fee
+     ↓
+PostgreSQL Transaction
+  ├── Save TradeEntity with calculated fees
+  └── Save OutboxEvent with ProcessedTradeEvent payload
+     ↓
+Outbox Publisher
+     ↓
+Kafka: trade-notifications
+     ↓
+Notification Service (implementation pending)
 ```
+
 ## Trade Processing
 1. Trade submission
 
@@ -507,6 +511,12 @@ The project will evolve incrementally toward a production-style event-driven bac
 - [x] Outbox retry on Kafka failure
 - [x] Trade persistence
 - [x] Basic reliability testing
+- [x] Configurable brokerage, tax, and regulatory fee calculation
+- [x] Fee validation and rounding
+- [x] Persisting calculated fees with trade records
+- [x] ProcessedTradeEvent containing enrichment data, fees, and trade status
+- [x] Unit tests for fee calculation and processed-event payload
+- [x] End-to-end verification of fee persistence and outbox publishing to Kafka
 
 **Planned**
 - [ ] Trade status lifecycle
