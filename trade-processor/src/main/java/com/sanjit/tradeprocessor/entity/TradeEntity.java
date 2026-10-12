@@ -72,6 +72,22 @@ public class TradeEntity {
     )
     private BigDecimal tax;
 
+
+    @Column(
+            name = "regulatory_fee",
+            precision = 19,
+            scale = 4
+    )
+    private BigDecimal regulatoryFee;
+
+    @Column(
+            name = "total_fees",
+            precision = 19,
+            scale = 4
+    )
+    private BigDecimal totalFees;
+
+
     @Enumerated(EnumType.STRING)
     @Column(name = "status",nullable = false)
     private TradeStatus status;

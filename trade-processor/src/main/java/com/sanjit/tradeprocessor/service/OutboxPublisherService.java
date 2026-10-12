@@ -1,7 +1,7 @@
 package com.sanjit.tradeprocessor.service;
 
 import com.sanjit.tradeprocessor.entity.OutboxEvent;
-import com.sanjit.tradeprocessor.entity.OutboxStatus;
+import com.sanjit.tradeprocessor.enums.OutboxStatus;
 import com.sanjit.tradeprocessor.repository.OutboxEventRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

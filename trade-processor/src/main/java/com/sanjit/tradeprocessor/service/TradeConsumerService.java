@@ -2,11 +2,12 @@ package com.sanjit.tradeprocessor.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.sanjit.common.constants.KafkaTopics;
+import com.sanjit.common.dto.ProcessedTradeEvent;
 import com.sanjit.common.dto.ReferenceDataResponse;
 import com.sanjit.common.dto.TradeEvent;
 import com.sanjit.common.enums.TradeStatus;
 import com.sanjit.tradeprocessor.entity.OutboxEvent;
-import com.sanjit.tradeprocessor.entity.OutboxStatus;
+import com.sanjit.tradeprocessor.enums.OutboxStatus;
 import com.sanjit.tradeprocessor.entity.TradeEntity;
 import com.sanjit.tradeprocessor.repository.TradeRepository;
 import lombok.RequiredArgsConstructor;
@@ -26,6 +27,7 @@ public class TradeConsumerService {
 
     private final TradeRepository tradeRepository;
     private final ReferenceDataClient referenceDataClient;
+    private final FeeCalculationService feeCalculationService;
     private final TradePersistenceService tradePersistenceService;
     private final ObjectMapper objectMapper;
 
@@ -55,6 +57,13 @@ public class TradeConsumerService {
 
         ReferenceDataResponse referenceData = referenceDataClient.getReferenceData(tradeEvent.symbol());
 
+
+        FeeCalculationService.FeeBreakdown fees =
+                feeCalculationService.calculateFees(
+                        tradeEvent.price(),
+                        tradeEvent.quantity()
+                );
+
         TradeEntity entity = TradeEntity.builder()
                 .tradeId(tradeEvent.tradeId())
                 .symbol(tradeEvent.symbol())
@@ -64,19 +73,42 @@ public class TradeConsumerService {
                 .exchange(referenceData.exchange())
                 .currency(referenceData.currency())
                 .sector(referenceData.sector())
+                .brokerageFee(fees.brokerageFee())
+                .tax(fees.tax())
+                .regulatoryFee(fees.regulatoryFee())
+                .totalFees(fees.totalFees())
                 .status(TradeStatus.PENDING)
                 .build();
+
+
+        ProcessedTradeEvent processedTradeEvent = new ProcessedTradeEvent(
+                entity.getTradeId(),
+                entity.getSymbol(),
+                entity.getSide(),
+                entity.getQuantity(),
+                entity.getPrice(),
+                entity.getExchange(),
+                entity.getCurrency(),
+                entity.getSector(),
+                entity.getBrokerageFee(),
+                entity.getTax(),
+                entity.getRegulatoryFee(),
+                entity.getTotalFees(),
+                entity.getStatus()
+        );
 
         String payload;
 
         try {
-            payload = objectMapper.writeValueAsString(tradeEvent);
+            payload = objectMapper.writeValueAsString(processedTradeEvent);
         } catch (JsonProcessingException e) {
             throw new IllegalStateException(
-                    "Failed to serialize trade event: " + tradeEvent.tradeId(),
+                    "Failed to serialize processed trade event: "
+                            + tradeEvent.tradeId(),
                     e
             );
         }
+
 
         OutboxEvent outboxEvent = OutboxEvent.builder()
                 .eventType("TRADE_CREATED")

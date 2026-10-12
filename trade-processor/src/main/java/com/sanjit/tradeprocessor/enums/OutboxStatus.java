@@ -1,4 +1,4 @@
-package com.sanjit.tradeprocessor.entity;
+package com.sanjit.tradeprocessor.enums;
 
 public enum OutboxStatus {
     PENDING,

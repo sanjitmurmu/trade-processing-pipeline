@@ -1,7 +1,7 @@
 package com.sanjit.tradeprocessor.repository;
 
 import com.sanjit.tradeprocessor.entity.OutboxEvent;
-import com.sanjit.tradeprocessor.entity.OutboxStatus;
+import com.sanjit.tradeprocessor.enums.OutboxStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.List;

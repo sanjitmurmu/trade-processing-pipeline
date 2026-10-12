@@ -1,5 +1,6 @@
 package com.sanjit.tradeprocessor.entity;
 
+import com.sanjit.tradeprocessor.enums.OutboxStatus;
 import jakarta.persistence.*;
 import lombok.*;
 
