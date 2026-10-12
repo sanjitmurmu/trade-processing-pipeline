@@ -270,7 +270,15 @@ TradeConsumerService
         |
         +----> Reference-data / Redis integration
         |
-        +----> Build TradeEntity
+        +----> FeeCalculationService
+        |          |
+        |          +----> FeeConfigurationRepository
+        |          |
+        |          +----> FeeBreakdown
+        |
+        +----> Build TradeEntity with fees
+        |
+        +----> Build ProcessedTradeEvent
         |
         +----> Build OutboxEvent
                     |
@@ -402,7 +410,7 @@ Maps to the current `trade` table.
 
 Current fields include:
 
-``` text
+```text
 id
 trade_id          UNIQUE
 symbol
@@ -414,12 +422,14 @@ currency
 sector
 brokerage_fee
 tax
+regulatory_fee
+total_fees
 status
 created_at
 updated_at
 ```
 
-The current entity includes `brokerage_fee` and `tax`. The fee-calculation milestone is expected to add `regulatory_fee` and `total_fees`, subject to the final schema decision.
+The TradeEntity persists the enriched trade, including the independently calculated fee amounts and their total.
 
 ## 9.2 `OutboxEvent`
 
@@ -572,11 +582,22 @@ The current response includes:
 
 The `symbol` field was added during implementation and must be retained in the LLD and API documentation.
 
-## 12.3 Outbox payload contract
+## 12.3 Processed event and Outbox payload contract
 
-The current consumer serializes a `TradeEvent` payload for storage in the Outbox Event. The publisher sends the stored payload to the topic configured on that event.
+The Trade Processor creates a `ProcessedTradeEvent` after reference-data enrichment and fee calculation. The event is serialized to JSON and stored as the payload of an `OutboxEvent`.
 
-The original design proposed a separate `ProcessedTradeEvent` published to `trade-processed`. Do not assume that older DTO/topic contract is the current one. The exact downstream event contract should be finalized and documented in `api-contracts.md` before implementing the Notification Service.
+The processed event contains:
+
+- Trade ID, symbol, side, quantity, and price.
+- Exchange, currency, and sector.
+- Brokerage fee, tax, regulatory fee, and total fees.
+- Trade status.
+
+The Outbox Event is stored in PostgreSQL and published by `OutboxPublisherService` to `trade-notifications`.
+
+The original input `TradeEvent` and downstream `ProcessedTradeEvent` serve different purposes. The database entity is not serialized directly as the event contract.
+
+The Notification Service has not yet been implemented; its consumption and processing behavior remain planned.
 
 ------------------------------------------------------------------------
 
@@ -631,14 +652,12 @@ The following components appear in the original design but are not represented a
 
 - Dedicated `TradeValidator`.
 - Separate `TradeService` business-orchestration class.
-- `FeeCalculationService`.
 - `TradeMapper`.
 - `OutboxService` abstraction.
 - `ProcessedEventEntity` and `ProcessedEventRepository`.
 - Notification consumer and notification-processing service.
 - Persistent downstream event idempotency.
 - Analytics and Audit consumers.
-- Fee-configuration persistence.
 - Any proposed `JsonUtil`, `KafkaTopics`, or `CacheKeys` classes not yet present in source.
 
 The purpose of retaining these items is to show the intended design direction without confusing it with the current implementation.
@@ -655,14 +674,13 @@ The purpose of retaining these items is to show the intended design direction wi
 3. Trade Processor consumes the event
 4. Consumer checks whether tradeId already exists
 5. Consumer obtains reference data through the cache/service integration
-6. Consumer constructs TradeEntity and OutboxEvent
-7. TradePersistenceService saves both in one transaction
-8. OutboxPublisherService finds PENDING events
-9. Publisher sends the stored payload to trade-notifications
-10. On successful send, the publisher marks the event PUBLISHED
+6. Consumer does the Fee Calculation
+7. Consumer constructs TradeEntity and OutboxEvent
+8. TradePersistenceService saves both in one transaction
+9. OutboxPublisherService finds PENDING events
+10. Publisher sends the stored payload to trade-notifications
+11. On successful send, the publisher marks the event PUBLISHED
 ```
-
-Fee calculation is a planned step between reference-data enrichment and persistence.
 
 ## 16.2 Planned future path
 
@@ -676,7 +694,7 @@ Duplicate check
 Reference-data enrichment
     |
     v
-FeeCalculationService [planned]
+FeeCalculationService
     |
     v
 Save Trade + Outbox Event atomically
