@@ -56,15 +56,33 @@ The system must enrich trades with:
 
 ### FR4: Fee Calculation
 
-The system must calculate:
+The system must calculate the following fees independently for each valid trade:
 
 - Brokerage fee.
 - Tax.
 - Regulatory fee.
 
-The requirements document does not prescribe the exact fee formulas or
-rates. The fee calculation model will be designed and implemented as a
-separate development milestone.
+The calculation model is:
+
+```text
+tradeValue = price × quantity
+
+brokerageFee  = tradeValue × brokerageRate / 100
+tax           = tradeValue × taxRate / 100
+regulatoryFee = tradeValue × regulatoryRate / 100
+```
+
+**Requirements:**
+
+- Each fee must use its own configurable rate.
+- Rates are expressed as percentages of the trade value.
+- Each individual fee must be rounded to four decimal places using `HALF_UP`.
+- The total fee must equal the sum of the three individually rounded fees.
+- The system must reject non-positive trade prices and quantities for fee calculation.
+- An active configuration must exist for each fee type; missing configurations or negative rates must cause fee calculation to fail.
+- Calculated fees must be persisted with the trade and included in the downstream `ProcessedTradeEvent`.
+
+The configured rates determine the fee amounts. Actual production fee rates are outside the scope of this project's initial model.
 
 ### FR5: Persistence
 
@@ -170,7 +188,7 @@ development milestone.
 | Trade ingestion              | Implemented                                  |
 | Trade validation             | Partially implemented / further work planned |
 | Reference data enrichment    | Implemented                                  |
-| Fee calculation              | Planned                                      |
+| Fee calculation              | Implemented                                  |
 | Trade persistence            | Implemented                                  |
 | Downstream event publication | Implemented through the Outbox pattern       |
 | Retry and failure handling   | Implemented                                  |
