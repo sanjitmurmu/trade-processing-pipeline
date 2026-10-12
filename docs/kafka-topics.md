@@ -13,7 +13,7 @@ This document is the operational reference for Kafka topics in the Trade Process
 | Topic                     | Role                                                             | Producer                         | Consumer                                 | Status                                                                           |
 |---------------------------|------------------------------------------------------------------|----------------------------------|------------------------------------------|----------------------------------------------------------------------------------|
 | `trade-events`            | Incoming trade events                                            | `trade-producer`                 | `trade-processor`                        | Implemented                                                                      |
-| `trade-notifications`     | Downstream event destination configured on current Outbox Events | Outbox Publisher                 | Notification consumer intended           | Publishing implemented; full consumer flow planned                               |
+| `trade-notifications`     | Downstream event destination configured on current Outbox Events | Outbox Publisher                 | Notification consumer intended           |Publishing implemented; Notification Service consumer pending.                         |
 | Spring Kafka retry topics | Retry failed input processing                                    | Spring Kafka retry mechanism     | Trade Processor retry listener           | Retry mechanism implemented; inspect runtime configuration for exact topic names |
 | Dead Letter Topic (DLT)   | Receives records after retry handling is exhausted               | Spring Kafka retry/DLT mechanism | DLT handler / later operational recovery | DLT handling implemented; exact topic name must be verified                      |
 
@@ -87,7 +87,11 @@ The older HLD used `trade-processed`. The current Outbox configuration uses `tra
 
 ## Current payload
 
-The current consumer serializes a `TradeEvent` payload for storage in the Outbox Event. The publisher sends that stored payload. A dedicated downstream DTO such as `ProcessedTradeEvent` was proposed in the original design but is not yet the authoritative current payload contract.
+The Trade Processor creates a `ProcessedTradeEvent` after reference-data enrichment and fee calculation. The event is stored as the Outbox payload and published by `OutboxPublisherService` to `trade-notifications`.
+
+The payload includes trade details, reference-data fields (`exchange`, `currency`, and `sector`), the calculated fee breakdown (`brokerageFee`, `tax`, `regulatoryFee`, and `totalFees`), and trade status.
+
+Publishing to `trade-notifications` is implemented and verified. The Notification Service consumer and its downstream processing remain planned.
 
 ------------------------------------------------------------------------
 
