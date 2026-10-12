@@ -16,7 +16,7 @@ The Trade Processor is responsible for the core trade-processing workflow:
 2.  Detect duplicate trades.
 3.  Retrieve reference data through the reference-data and Redis-cache integration.
 4.  Enrich the trade with exchange, currency, and sector.
-5.  Calculate fees — **planned, not yet implemented**.
+5.  Calculate brokerage, tax, regulatory fees, and total fees using active fee configurations.
 6.  Persist the trade and an Outbox Event atomically.
 7.  Publish pending Outbox Events asynchronously through the Outbox Publisher.
 8.  Handle failed processing through Spring Kafka retry/DLT behavior.
@@ -82,7 +82,7 @@ trade-processor
 ├── mapper/
 │   └── TradeMapper                           [planned]
 └── service/
-    └── FeeCalculationService                 [planned]
+    └── FeeCalculationService                 [implemented]
 ```
 
 The exact physical package paths should be confirmed against the current repository before they are treated as authoritative. The tree above describes responsibilities and known classes; it is not intended to invent missing classes.
@@ -116,7 +116,18 @@ Duplicate check by tradeId
 Reference-data lookup / Redis cache
       |
       v
-Build TradeEntity + OutboxEvent
+FeeCalculationService
+      |
+      +--> Brokerage fee
+      +--> Tax
+      +--> Regulatory fee
+      +--> Total fees
+      |
+      v
+Build TradeEntity + ProcessedTradeEvent
+      |
+      v
+Build OutboxEvent
       |
       v
 TradePersistenceService
@@ -124,15 +135,18 @@ TradePersistenceService
       | @Transactional
       v
 PostgreSQL
+  ├── Trade with calculated fees
+  └── Outbox event with processed payload
       |
       v
 OutboxPublisherService
       |
       v
 Kafka: trade-notifications
+      |
+      v
+Notification Service [implementation pending]
 ```
-
-Fee calculation will be added between reference-data enrichment and construction/persistence of the final trade.
 
 ------------------------------------------------------------------------
 
@@ -146,10 +160,13 @@ The consumer orchestrates processing of a Kafka trade event. Current responsibil
 - Log the event.
 - Check whether the `tradeId` already exists.
 - Retrieve reference data.
-- Construct a `TradeEntity`.
-- Serialize the event payload for the Outbox.
+- Invoke FeeCalculationService to calculate the trade's fees.
+- Populate TradeEntity with the calculated fee amounts.
+- Construct a ProcessedTradeEvent containing reference-data enrichment, calculated fees, and trade status.
+- Serialize the processed event for the Outbox.
 - Construct an `OutboxEvent`.
 - Delegate the database writes to `TradePersistenceService`.
+
 
 The consumer uses Spring Kafka retry handling through `@RetryableTopic` and a `@DltHandler`.
 
@@ -208,29 +225,32 @@ The current response contract includes `symbol`:
 
 This response shape should be kept consistent in the DTO and API documentation.
 
-## 5.5 `FeeCalculationService` — planned
+## 5.5 `FeeCalculationService` — implemented
 
-A dedicated fee-calculation service is part of the design but has not yet been implemented.
+**Responsibility:** calculate the fee breakdown for a trade using active fee configurations.
 
-Its planned responsibilities are:
+The service calculates the trade value and independently calculates brokerage, tax, and regulatory fees.
 
-- Calculate trade value.
-- Calculate brokerage fee.
-- Calculate tax.
-- Calculate regulatory fee.
-- Calculate total fees.
-
-Conceptual formulas:
-
-``` text
+```text
 tradeValue       = price × quantity
-brokerageFee     = tradeValue × brokerageRate
-tax              = tradeValue × taxRate
-regulatoryFee    = tradeValue × regulatoryRate
+
+brokerageFee     = tradeValue × brokerageRate / 100
+tax              = tradeValue × taxRate / 100
+regulatoryFee    = tradeValue × regulatoryRate / 100
+
 totalFees        = brokerageFee + tax + regulatoryFee
 ```
 
-Rates, precision/rounding rules, and fee-configuration persistence must be designed before implementation. These formulas are conceptual, not a claim that the current code performs these calculations.
+**Calculation rules:**
+
+- Each fee type has its own configurable rate, stored as a percentage.
+- Each individual fee is rounded to four decimal places using `HALF_UP`.
+- The total is calculated from the individually rounded fee amounts.
+- Non-positive prices and quantities are rejected.
+- Missing active configurations and negative rates cause calculation to fail.
+- The service returns a fee breakdown that the Trade Processor uses when building the persisted trade and processed event.
+
+The fee configuration is stored in the `fee_configuration` table. Production-specific fee rates are outside the scope of the initial model.
 
 ------------------------------------------------------------------------
 
