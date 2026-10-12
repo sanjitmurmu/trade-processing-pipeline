@@ -18,7 +18,7 @@ The application currently uses PostgreSQL for trade persistence and the Transact
 | `outbox_event`      | Stores downstream events to be published | Implemented                                                            |
 | `reference_data`    | Stores symbol-level enrichment data      | Defined in the architecture; verify current persistence implementation |
 | `processed_events`  | Supports downstream event idempotency    | Planned                                                                |
-| `fee_configuration` | Stores configurable fee rates            | Proposed future design                                                 |
+| `fee_configuration` | Stores configurable fee rates            | Implemented                                                            |
 
 Redis is used separately as a cache for reference data. The Redis cache is not a substitute for the PostgreSQL schema.
 
@@ -45,6 +45,8 @@ The current entity includes the following fields.
 | `sector`        | String / `VARCHAR`                  | Required                                                              |
 | `brokerage_fee` | `NUMERIC(19,4)`                     | Present in the current entity                                         |
 | `tax`           | `NUMERIC(19,4)`                     | Present in the current entity                                         |
+| `regulatory_fee`| `NUMERIC(19,4)`                     | Present in the current entity                                         |
+| `total_fees`    | `NUMERIC(19,4)`                     | Present in the current entity                                         |
 | `status`        | Enum stored as string               | Required                                                              |
 | `created_at`    | Timestamp                           | Set when the entity is first persisted                                |
 | `updated_at`    | Timestamp                           | Set on insert and updated on entity update                            |
@@ -67,6 +69,8 @@ currency            NOT NULL
 sector              NOT NULL
 brokerage_fee       NUMERIC(19,4)
 tax                 NUMERIC(19,4)
+regulatory_fee      NUMERIC(19,4)
+total_fees          NUMERIC(19,4)
 status              NOT NULL
 created_at
 updated_at
@@ -271,27 +275,24 @@ totalFees        = brokerageFee + tax + regulatoryFee
 |------------------|-----------------|-----------------|
 | `brokerage_fee`  | `NUMERIC(19,4)` | Already present |
 | `tax`            | `NUMERIC(19,4)` | Already present |
-| `regulatory_fee` | `NUMERIC(19,4)` | Planned         |
-| `total_fees`     | `NUMERIC(19,4)` | Planned         |
+| `regulatory_fee` | `NUMERIC(19,4)` | Already present |
+| `total_fees`     | `NUMERIC(19,4)` | Already present |
 
 The final schema must be confirmed when fee calculation is implemented. Precision, scale, rounding rules, and whether `total_fees` is stored or derived are design decisions still to be made.
 
-## 7.2 Potential `fee_configuration` table
+## 7.2 `fee_configuration` — Implemented
 
-A configurable rate model is preferable to scattering rate constants throughout business logic. One possible future design is:
+Stores the active percentage rate for each fee type.
 
-``` text
-fee_configuration
---------------------------------
-id
-fee_type
-rate
-active
-effective_from
-effective_to
-```
+| Column | Type | Description |
+|---|---|---|
+| `fee_type` | Enum | Fee type: `BROKERAGE`, `TAX`, or `REGULATORY`; unique |
+| `rate` | `NUMERIC(10,6)` | Configured percentage rate |
+| `active` | Boolean | Whether the configuration is active |
 
-This is a proposal, not an implemented schema. Before building it, decide whether rates vary by exchange, instrument, trade side, customer, or effective date, and define the uniqueness and lookup rules accordingly.
+Each fee is calculated independently from the trade value (`price × quantity`). The configured rate is a percentage, so the calculation divides the product by 100. Individual fee amounts are rounded to four decimal places using `HALF_UP`; total fees are the sum of the rounded amounts.
+
+The Trade Processor requires an active configuration for each fee type. Missing active configurations or negative rates cause fee calculation to fail.
 
 ------------------------------------------------------------------------
 
