@@ -255,44 +255,54 @@ Before implementation, define:
 
 ------------------------------------------------------------------------
 
-# 7. Fee Calculation — Planned Schema Changes
+# 7. Fee Calculation
 
-The current `trade` entity already contains `brokerage_fee` and `tax`. Fee calculation itself has not yet been implemented.
+Fee calculation is implemented in the Trade Processor. The calculated fee amounts are persisted in the `trade` table, and the fee configuration is stored in `fee_configuration`.
 
-The planned calculation model is:
+## 7.1 Calculation model
 
-``` text
+The system calculates each fee independently using the trade value.
+
+```text
 tradeValue       = price × quantity
-brokerageFee     = tradeValue × brokerageRate
-tax              = tradeValue × taxRate
-regulatoryFee    = tradeValue × regulatoryRate
+
+brokerageFee     = tradeValue × brokerageRate / 100
+tax              = tradeValue × taxRate / 100
+regulatoryFee    = tradeValue × regulatoryRate / 100
+
 totalFees        = brokerageFee + tax + regulatoryFee
 ```
 
-## 7.1 Potential future trade columns
+Each fee rate is expressed as a percentage. Each individual fee is rounded to four decimal places using `HALF_UP`. The total is the sum of the individually rounded fee amounts.
 
-| Column           | Proposed type   | Status          |
-|------------------|-----------------|-----------------|
-| `brokerage_fee`  | `NUMERIC(19,4)` | Already present |
-| `tax`            | `NUMERIC(19,4)` | Already present |
-| `regulatory_fee` | `NUMERIC(19,4)` | Already present |
-| `total_fees`     | `NUMERIC(19,4)` | Already present |
+The Trade Processor rejects non-positive prices and quantities for fee calculation. Missing active configurations or negative rates cause calculation to fail.
 
-The final schema must be confirmed when fee calculation is implemented. Precision, scale, rounding rules, and whether `total_fees` is stored or derived are design decisions still to be made.
+## 7.2 Persisted fee columns
 
-## 7.2 `fee_configuration` — Implemented
+The following columns are present in the `trade` entity:
 
-Stores the active percentage rate for each fee type.
+| Column | Type | Purpose |
+|---|---|---|
+| `brokerage_fee` | `NUMERIC(19,4)` | Calculated brokerage fee |
+| `tax` | `NUMERIC(19,4)` | Calculated tax |
+| `regulatory_fee` | `NUMERIC(19,4)` | Calculated regulatory fee |
+| `total_fees` | `NUMERIC(19,4)` | Sum of the three rounded fees |
 
-| Column | Type | Description |
+These amounts are stored with the processed trade. The total is persisted rather than calculated only at query time.
+
+## 7.3 `fee_configuration` table
+
+The `fee_configuration` table stores configurable rates for the supported fee types.
+
+| Column | Type | Purpose |
 |---|---|---|
 | `fee_type` | Enum | Fee type: `BROKERAGE`, `TAX`, or `REGULATORY`; unique |
 | `rate` | `NUMERIC(10,6)` | Configured percentage rate |
-| `active` | Boolean | Whether the configuration is active |
+| `active` | Boolean | Indicates whether the configuration is active |
 
-Each fee is calculated independently from the trade value (`price × quantity`). The configured rate is a percentage, so the calculation divides the product by 100. Individual fee amounts are rounded to four decimal places using `HALF_UP`; total fees are the sum of the rounded amounts.
+The service looks up an active configuration for each fee type. Each type must have an active configuration for fee calculation to succeed.
 
-The Trade Processor requires an active configuration for each fee type. Missing active configurations or negative rates cause fee calculation to fail.
+The initial project model demonstrates configurable fee calculation. Production-specific fee schedules and regulatory rules are outside its scope.
 
 ------------------------------------------------------------------------
 
@@ -384,19 +394,19 @@ When a database-related feature is implemented:
 
 # 13. Current vs Planned Summary
 
-| Database object or capability             | Status                                |
-|-------------------------------------------|---------------------------------------|
-| `trade` table                             | Implemented                           |
-| `trade.trade_id` uniqueness               | Implemented                           |
-| `outbox_event` table                      | Implemented                           |
-| Atomic trade + Outbox persistence         | Implemented and tested                |
-| `PENDING` → `PUBLISHED` lifecycle         | Implemented and tested                |
-| Reference Data API response with `symbol` | Implemented                           |
-| PostgreSQL `reference_data` table         | Verify against current service source |
-| `processed_events` table                  | Planned                               |
-| `regulatory_fee` and `total_fees` columns | Planned                               |
-| `fee_configuration` table                 | Proposed                              |
-| Outbox status index                       | Evaluate based on query plan          |
+| Database object or capability | Status |
+|---|---|
+| `trade` table and `trade_id` uniqueness | Implemented |
+| Trade fee columns | Implemented |
+| `fee_configuration` table | Implemented |
+| Fee calculation and fee persistence | Implemented and tested |
+| `outbox_event` table | Implemented |
+| Atomic trade and Outbox persistence | Implemented and tested |
+| `PENDING` → `PUBLISHED` lifecycle | Implemented and tested |
+| Reference Data API response with `symbol` | Implemented |
+| PostgreSQL `reference_data` table | Verify against current service source |
+| `processed_events` table for downstream idempotency | Planned |
+| Outbox status index | Evaluate based on query plan |
 
 ------------------------------------------------------------------------
 
