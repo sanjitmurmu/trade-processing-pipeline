@@ -15,9 +15,9 @@ It distinguishes the contracts established by the current project design from de
 | Trade submission API           | Client → Trade Producer                        | Submit a trade for processing      | Implemented; verify exact HTTP response against controller  |
 | Trade input event              | Trade Producer → Kafka `trade-events`          | Deliver a trade to the processor   | Implemented                                                 |
 | Reference-data API             | Trade Processor → Reference Data Service       | Retrieve enrichment data by symbol | Implemented; response includes `symbol`                     |
-| Outbox downstream event        | Outbox Publisher → Kafka `trade-notifications` | Publish the stored event payload   | Implemented; payload currently serialized from `TradeEvent` |
+| Outbox downstream event        | Outbox Publisher → Kafka `trade-notifications` | Publish the stored event payload   | Implemented; payload is `ProcessedTradeEvent`               |
 | Notification consumer contract | Kafka → Notification Service                   | Consume downstream events          | Planned / not fully implemented                             |
-| Fee-calculation contract       | Trade Processor → fee calculation component    | Calculate fees                     | Planned                                                     |
+| Fee-calculation contract       | Trade Processor → fee calculation component    | Calculate fees                     | Implemented                                                 |
 
 ------------------------------------------------------------------------
 
@@ -30,7 +30,7 @@ The Trade Producer exposes an HTTP API for clients to submit trades. The produce
 The original design specifies:
 
 ``` http
-POST /trade
+POST /api/trades
 ```
 
 Confirm the exact controller mapping and response status/body against the current `trade-producer` source before treating undocumented response details as final.
@@ -225,21 +225,31 @@ The older design used `trade-processed`. That is historical design terminology, 
 
 ## 5.2 Current payload behavior
 
-The current consumer serializes a `TradeEvent` payload and stores it in the `OutboxEvent`. The Outbox Publisher sends the stored payload to the topic recorded on that Outbox Event.
+The Trade Processor constructs a `ProcessedTradeEvent` after reference-data enrichment and fee calculation. It serializes this DTO into the Outbox Event payload. The Outbox Publisher sends the stored payload to the topic recorded on the Outbox Event.
 
-Example payload shape:
+Example payload:
 
-``` json
+```json
 {
-  "tradeId": "TR123",
+  "tradeId": "E2E-FEE-20261012-001",
   "symbol": "AAPL",
-  "quantity": 100,
-  "price": 220,
-  "side": "BUY"
+  "side": "BUY",
+  "quantity": 10,
+  "price": 100.00,
+  "exchange": "NASDAQ",
+  "currency": "USD",
+  "sector": "TECH",
+  "brokerageFee": 1.0000,
+  "tax": 0.5000,
+  "regulatoryFee": 0.1000,
+  "totalFees": 1.6000,
+  "status": "PENDING"
 }
 ```
 
-This example shows the current serialization source and should not be interpreted as a finalized business event schema containing calculated fees or a persisted-trade status.
+This example reflects the successfully verified local end-to-end flow. Fee values are illustrative for the configured test rates and trade value; they are not production fee recommendations.
+
+The original input `TradeEvent`, downstream `ProcessedTradeEvent`, and database `TradeEntity` have distinct responsibilities. The database entity is not serialized directly as the downstream event contract.
 
 ## 5.3 Delivery and status behavior
 
@@ -260,54 +270,28 @@ Publication flow:
 
 This is an at-least-once publication approach. A crash after Kafka accepts a message but before the database status update can lead to duplicate publication.
 
-## 5.4 Contract to finalize before Notification Service implementation
+## 5.4 Downstream consumer status
 
-Before implementing the Notification Service, decide whether its input should remain the current serialized `TradeEvent` or become a dedicated downstream DTO such as the originally proposed `ProcessedTradeEvent`.
+The downstream event contract is represented by `ProcessedTradeEvent` and is published to `trade-notifications` through the Transactional Outbox.
 
-A finalized downstream contract should define:
+The Notification Service has not yet been implemented. Its event consumption, notification behavior, and downstream idempotency remain planned.
 
-- Event name/type.
-- Stable event identifier for downstream idempotency.
-- Trade identifier.
-- Required trade and enrichment fields.
-- Fee fields once fee calculation exists.
-- Schema evolution and compatibility expectations.
-
-Until that decision is implemented, do not describe `ProcessedTradeEvent` as the current published contract.
+Before implementing the Notification Service, define how it will handle duplicate events and failures, and whether it needs a stable event identifier in addition to `tradeId`.
 
 ------------------------------------------------------------------------
 
-# 6. Planned Fee Fields and Future Contract
+# 6. Implemented Fee Fields
 
-Fee calculation is planned and is not yet part of the current input or Outbox payload contract.
+The `ProcessedTradeEvent` contains the following calculated fee fields:
 
-The intended calculation model is:
+- `brokerageFee`
+- `tax`
+- `regulatoryFee`
+- `totalFees`
 
-``` text
-tradeValue       = price × quantity
-brokerageFee     = tradeValue × brokerageRate
-tax              = tradeValue × taxRate
-regulatoryFee    = tradeValue × regulatoryRate
-totalFees        = brokerageFee + tax + regulatoryFee
-```
+Each fee is calculated independently using its configured percentage rate against `price × quantity`. Individual fees are rounded to four decimal places using `HALF_UP`, and `totalFees` is the sum of those rounded amounts.
 
-After the fee-calculation implementation, the downstream event contract may need to include the calculated values:
-
-``` json
-{
-  "tradeId": "TR123",
-  "symbol": "AAPL",
-  "quantity": 100,
-  "price": 220,
-  "side": "BUY",
-  "brokerageFee": "<calculated value>",
-  "tax": "<calculated value>",
-  "regulatoryFee": "<calculated value>",
-  "totalFees": "<calculated value>"
-}
-```
-
-This is a **future illustration only**. It is not a valid current payload example, and placeholder values are deliberately used instead of fabricated amounts. The final field names, decimal representation, precision, rounding rules, and event schema must be agreed during implementation.
+The values are persisted in the `trade` table and included in the downstream Outbox payload. The input `TradeEvent` contract remains separate and does not need to contain calculated fees.
 
 ------------------------------------------------------------------------
 
