@@ -62,7 +62,8 @@ The project is designed as a hands-on backend engineering project focused on eve
               ┌─────────────────────┐
               │ Notification        │
               │ Service             │
-              │    (Scaffolded)     │
+              │ (Kafka Consumer     |
+              |     Implemented)    │
               └─────────────────────┘
 
 The architecture is implemented as a Maven multi-module project. Each service is a separate Spring Boot application and can be built and deployed independently.
@@ -75,7 +76,7 @@ The architecture is implemented as a Maven multi-module project. Each service is
 | `trade-producer` | Exposes REST API and publishes trade events to Kafka | Implemented |
 | `trade-processor` | Consumes trade events, enriches trades, calculates fees, persists trades, and creates outbox events | Implemented |
 | `reference-data-service` | Provides reference data for trade enrichment | Implemented |
-| `notification-service` | Consumes downstream processed-trade events for notification processing | Scaffolded; implementation pending |
+| `notification-service` | Consumes downstream processed-trade events for notification processing | Implemented |
 
 
 ## Technology Stack
@@ -123,7 +124,7 @@ Outbox Publisher
      ↓
 Kafka: trade-notifications
      ↓
-Notification Service (implementation pending)
+Notification Service (consumes and logs ProcessedTradeEvent)
 ```
 
 ## Trade Processing
@@ -464,6 +465,8 @@ The repository follows a monorepo / multi-module Maven structure while maintaini
 | `trade-producer` | 8080 |
 | `trade-processor` | 8081 |
 | `reference-data-service` | 8082 |
+|`notification-service` | 8083|
+
 
 **Infrastructure:**
 
@@ -517,10 +520,12 @@ The project will evolve incrementally toward a production-style event-driven bac
 - [x] ProcessedTradeEvent containing enrichment data, fees, and trade status
 - [x] Unit tests for fee calculation and processed-event payload
 - [x] End-to-end verification of fee persistence and outbox publishing to Kafka
+- [x] Notification Service Kafka consumer
+- [x] Outbox Publisher serialization fix
+- [x] Unit tests for publisher and notification listener
 
 **Planned**
 - [ ] Trade status lifecycle
-- [ ] Notification processing
 - [ ] Automated unit and integration testing
 - [ ] Observability and metrics
 - [ ] Improved outbox processing and concurrency
