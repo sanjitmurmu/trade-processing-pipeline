@@ -1,5 +1,7 @@
 package com.sanjit.tradeprocessor.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sanjit.common.dto.ProcessedTradeEvent;
 import com.sanjit.tradeprocessor.entity.OutboxEvent;
 import com.sanjit.tradeprocessor.enums.OutboxStatus;
 import com.sanjit.tradeprocessor.repository.OutboxEventRepository;
@@ -19,6 +21,7 @@ public class OutboxPublisherService {
 
     private final OutboxEventRepository outboxEventRepository;
     private final KafkaTemplate<String, Object> kafkaTemplate;
+    private final ObjectMapper objectMapper;
 
     @Scheduled(initialDelay = 60000, fixedDelay = 60000)
     public void publishPendingEvents() {
@@ -31,11 +34,17 @@ public class OutboxPublisherService {
         for (OutboxEvent event : pendingEvents) {
 
             try {
+                ProcessedTradeEvent eventPayload =
+                        objectMapper.readValue(
+                                event.getPayload(),
+                                ProcessedTradeEvent.class
+                        );
+
                 kafkaTemplate
                         .send(
                                 event.getTopic(),
                                 event.getAggregateId(),
-                                event.getPayload()
+                                eventPayload
                         )
                         .get();
 
